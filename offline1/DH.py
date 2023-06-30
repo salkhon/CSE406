@@ -40,6 +40,8 @@ class DiffieHellman:
     def get_modulus_p(self, k: int) -> int:
         """Generate a safe prime with length of k bits for modulus p. 
 
+        `p` is a safe prime iff, `p-1 = 2 * (p-1)/2`, where `(p-1)/2` is a prime.
+
         Args:
             k (int): Number of bits in safe prime
 
@@ -63,48 +65,68 @@ class DiffieHellman:
         Returns:
             int: Prime
         """
-        min = 1 << (k-1)
-        max = (1 << k) - 1
+        min_res = 1 << (k-1)
+        max_res = (1 << k) - 1
 
-        num = min
-        while not self.is_prime(num):
-            num = random.randint(min, max)
+        res = min_res
+        while not self.is_prime(res):
+            res = random.randint(min_res, max_res)
 
-        return num
+        return res
 
-    def get_base_g(self, p: int,  min: int, max: int) -> int:
-        """Generate a modular base that is a primitive root of the provided `p`.
+    def get_base_g(self, p: int,  min_g: int, max_g: int) -> int:
+        """Generate a modular base in [`min_g`, `max_g`] < `p` that is a primitive root of `p`. 
+        Here `p` has to be a safe prime.
 
         Args:
-            p (int): Modulus
-            min (int): Minimum g
-            max (int): Maximum g
+            p (int): Modulus (**Safe Prime**)
+            min_g (int): Minimum g
+            max_g (int): Maximum g
 
         Returns:
             int: Generated base in [`min`, `max`]
         """
+        def is_primitive(g: int) -> bool:
+            """Check if `g` is a primitive root of `p`.
+
+            Args:
+                g (int): Candidate primitive root
+
+            Returns:
+                bool: Whether `g` is a primitive root of `p`
+            """
+            return pow(g, 2, p) != 1 and pow(g, (p-1)//2, p) != 1
+
+        g = min_g
+        while not is_primitive(g):
+            g = random.randint(min_g, max_g)
+
+        return g
+
+    def get_private_key(self, key_width: int) -> int:
+        """Generate private key of `key_width` bits.
+
+        Args:
+            key_width (int): Key width in bits
+
+        Returns:
+            int: Private key
+        """
+        return self.get_prime(key_width)
+
+    def get_public_key(self, p: int, g: int, a: int) -> int:
+        """Generate public key from modulus `p`, modular base `g` and private key `a`.
+
+        Args:
+            p (int): Modulus
+            g (int): Modular base
+            a (int): Private key
+
+        Returns:
+            int: Public key
+        """
+        return pow(g, a, p)
 
 
 if __name__ == "__main__":
     dh = DiffieHellman()
-    p = dh.get_modulus_p(128)
-    print(p)
-    print("p-1 divisible by 2?", (p-1) % 2 == 0)
-    print("Factors of p-1:", (p-1)//2, 2)
-
-
-"""
-    1. generate 2 ints; modulus and base
-    modulus:
-    take a large prime p as modulus
-    - Generate a large prime p which is at least k bits long (take k as param)
-
-    - Generate big randoms, check if its prime using Miller Rabin Primality test
-
-    base: any int g, such that [g^1 to g^(p-1)] mod p forms a residue class of p.
-    Since p is large, "any int" brute force search is not feasible. 
-    Efficient way of Finding primitive roots use Euler's totient function's prime factors. 
-    Prime factors of Phi(p) = p-1
-    Tip: Generate p such that finding the prime factors of (p-1) is easy. [p-1 is also a prime?]
-    Generate g in [min, max], they are params.
-"""
