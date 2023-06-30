@@ -1,8 +1,7 @@
-from collections.abc import Callable
-from typing import Any, TypeVar
 from BitVector import BitVector
 import numpy as np
 import numpy.typing as npt
+import time
 
 
 class AES:
@@ -72,10 +71,22 @@ class AES:
 
     RC = (0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36)
 
-    def __init__(self):
-        pass
+    def __init__(self, key: str = "Thats my Kung Fu"):
+        keylen = len(key)
+        if keylen > 16:
+            self.key = key[:16]
+        elif keylen < 16:
+            self.key = '\0' * (16-keylen) + key
+        else:
+            self.key = key
 
-    def encrypt(self, plaintext: str, key: str, verbose=False) -> str:
+        self.timings = {
+            "Key Scheduling": -1.0,
+            "Encryption Time": -1.0,
+            "Decryption Time": -1.0
+        }
+
+    def encrypt(self, plaintext: str) -> str:
         """Encrypt the given text, with the provided key.
 
         If key has length less than 128 bits, zero pad it. 
@@ -87,15 +98,17 @@ class AES:
         Returns:
             str: Cipher
         """
-        # if key is longer than 16, truncate
-        if len(key) > 16:
-            key = key[:16]
+        enc_start_time = time.time()
 
         # chunk or pad text to list 16 char parts
-        plaintexts = self.convert_text_to_16_bytes(plaintext)
+        plaintexts = self.convert_text_to_16_byte_chunks(plaintext)
+
+        ks_start_time = time.time()
 
         # get list of 4x4 round key matrices
-        round_key_mats = self.key_expansion(key)
+        round_key_mats = self.key_expansion(self.key)
+
+        ks_end_time = time.time()
 
         # for each 16 character plain text, do all rounds of encryption
         encryption = ""
@@ -108,14 +121,17 @@ class AES:
             for round in range(11):
                 state_mat = self.compute_round_encrypt(
                     state_mat, round_key_mats[round], round)
-                self.display_nparray_in_hex(state_mat)
 
             encryption += "".join([hex(elem)[2:].zfill(2)
                                    for elem in state_mat.flatten(order="F")])
 
+        enc_end_time = time.time()
+        self.timings["Key Scheduling"] = ks_end_time - ks_start_time
+        self.timings["Encryption Time"] = enc_end_time - enc_start_time
+
         return encryption
 
-    def decrypt(self, cipher: str, key: str) -> str:
+    def decrypt(self, cipher: str) -> str:
         """Decrpypt the given cipher (in hex string format) with the given key.
 
         Args:
@@ -125,16 +141,14 @@ class AES:
         Returns:
             str: Plain text
         """
-        # if key is longer than 16, truncate
-        if len(key) > 16:
-            key = key[:16]
+        dec_start_time = time.time()
 
         # chunk or pad text to list 16 char parts
-        cipher_ascii_str = BitVector(hexstring=cipher).get_bitvector_in_ascii()
-        ciphertexts = self.convert_text_to_16_bytes(cipher_ascii_str)
+        cipher_ascii_str = convert_hex_to_ascii_string(hex=cipher)
+        ciphertexts = self.convert_text_to_16_byte_chunks(cipher_ascii_str)
 
         # get list of 4x4 round key matrices
-        round_key_mats = self.key_expansion(key)
+        round_key_mats = self.key_expansion(self.key)
         round_key_mats.reverse()
 
         # for each 16 character plain text, do all rounds of encryption
@@ -150,6 +164,9 @@ class AES:
 
             decryption += "".join([chr(elem)
                                   for elem in state_mat.flatten(order="F")])
+
+        dec_time_end = time.time()
+        self.timings["Decryption Time"] = dec_time_end - dec_start_time
 
         return decryption.replace("\0", "")
 
@@ -202,7 +219,7 @@ class AES:
                     state_mat_res[row, :], shift=-row)
 
             # mix column
-            if round != 10:  # todo: variable rounds
+            if round != 10:
                 state_mat_res = self.mix_column(state_mat_res)
 
             # add round key
@@ -235,7 +252,7 @@ class AES:
 
         return result_mat.astype(np.uint8)
 
-    def convert_text_to_16_bytes(self, plaintext: str) -> list[str]:
+    def convert_text_to_16_byte_chunks(self, plaintext: str) -> list[str]:
         """Convert text of any length to list of 16 bytes texts (128 bits). If smaller, pad it to 16 chars, 
         if larger, chunk it to a list of 16 character chunks.
 
@@ -245,7 +262,6 @@ class AES:
         Returns:
             list[str]: List of 16 byte texts
         """
-
         def pad_smaller_text(text: str) -> str:
             return '\0' * (16 - len(text)) + text
 
@@ -263,8 +279,8 @@ class AES:
 
         return texts
 
-    def convert_16_char_str_to_4x4_mat(self, key: str) -> npt.NDArray[np.uint8]:
-        """Convert 16 character key (HAS TO BE 16 character KEY) to a 4x4 column major matrix of
+    def convert_16_char_str_to_4x4_mat(self, str16: str) -> npt.NDArray[np.uint8]:
+        """Convert 16 character string to a 4x4 column major matrix of
         4 4-character words, whose UNICODE numbers are stored in the matrix.
 
         Args:
@@ -274,27 +290,35 @@ class AES:
             npt.NDArray[np.uint8]: 2D column wise matrix, each column having the UNICODE number of a 4 
             character word
         """
-
         words = [self.convert_str_to_unicode_int_array(
-            key[i:i+4]) for i in range(0, len(key), 4)]
+            str16[i:i+4]) for i in range(0, len(str16), 4)]
         return np.array(words).T
 
-    def convert_str_to_unicode_int_array(self, key: str) -> npt.NDArray[np.uint8]:
+    def convert_str_to_unicode_int_array(self, s: str) -> npt.NDArray[np.uint8]:
         """Convert string to an array of unicode ints.
 
         Args:
-            key (str): Key string
+            s (str): Key string
 
         Returns:
             npt.NDArray[np.uint8]: array of UNICODE ints of the chars
         """
-        return np.array([ord(c) for c in key])
+        return np.array([ord(c) for c in s])
 
     def byte_substitution(self, mat: npt.NDArray[np.uint8], box=SBOX) -> npt.NDArray[np.uint8]:
+        """Perform byte substitution of each element in the matrix `mat` using the substitution matrix `box`.
+
+        Args:
+            mat (npt.NDArray[np.uint8]): Matrix to be substituted
+            box (tuple): Substitution matrix. Defaults to SBOX.
+
+        Returns:
+            npt.NDArray[np.uint8]: The substituted result
+        """
         return np.vectorize(lambda elem: box[elem])(mat)
 
     def get_next_round_key(self, key_word_mat: npt.NDArray[np.uint8], round: int) -> npt.NDArray[np.uint8]:
-        """Get next round's key from provided key.
+        """Get next round's key from provided key matrix.
 
         Args:
             key_word_mat: npt.NDArray[np.uint8]: 4x4 matrix of words in the key, in column major order
@@ -303,6 +327,7 @@ class AES:
         Returns:
             npt.NDArray[np.uint8]: The 4x4 matrix for the next round's key
         """
+        # left shift last word
         gw3 = np.roll(key_word_mat[:, 3], shift=-1)  # -1 for left shift by 1
 
         # byte substitution
@@ -328,13 +353,11 @@ class AES:
         Returns:
             list[npt.NDArray[np.uint8]]: List of 11 4x4 round key matrices
         """
-
         key_mat = self.convert_16_char_str_to_4x4_mat(key)
 
         # list of key matrices for each round
         round_key_mats: list[npt.NDArray[np.uint8]] = [key_mat]
 
-        # todo: variable round of keys for variable keys
         for round in range(10):
             next_key_mat = self.get_next_round_key(key_mat, round)
             round_key_mats.append(next_key_mat)
@@ -346,16 +369,51 @@ class AES:
         hex_func = np.vectorize(hex)
         print(hex_func(array))
 
-    def convert_ascii_to_hex_string(self, ascii: str) -> str:
-        return "".join([hex(ord(char))[2:].zfill(2)
-                        for char in ascii])
+
+def convert_ascii_to_hex_string(ascii: str) -> str:
+    return "".join([hex(ord(char))[2:].zfill(2)
+                    for char in ascii])
+
+
+def convert_hex_to_ascii_string(hex: str) -> str:
+    return BitVector(hexstring=hex).get_bitvector_in_ascii()
+
+
+def convert_int_to_byte_level_ascii(i: int) -> str:
+    """Convert each byte from an int to it's ascii character. So, a 16 byte int will be converted to a 16 character
+    string.
+
+    Args:
+        i (int): Integer
+
+    Returns:
+        str: Byte level string
+    """
+    bv = BitVector(intVal=i)
+    return bv.get_bitvector_in_ascii()
 
 
 if __name__ == "__main__":
-    aes = AES()
-    KEY = "Thats my Kung Fu more stuff"
-    TEXT = "Two One Nine Two Radio Alpha joseph bravo plane gonjo broken something run out of things to say"
-    enc = aes.encrypt(plaintext=TEXT, key=KEY)
-    print(enc)
-    dec = aes.decrypt(enc, KEY)
-    print(dec)
+    print("Plain Text:")
+    text = input("In ASCII: ")
+    print("In HEX:", convert_ascii_to_hex_string(text))
+
+    print("\nKey:")
+    key = input("In ASCII: ")
+    print("In HEX:", convert_ascii_to_hex_string(key))
+
+    aes = AES(key)
+
+    print("\nCipher Text:")
+    enc = aes.encrypt(text)
+    print("In HEX:", enc)
+    print("In ASCII:", convert_hex_to_ascii_string(enc))
+
+    print("\nDeciphered Text:")
+    dec = aes.decrypt(enc)
+    print("In HEX:", convert_ascii_to_hex_string(dec))
+    print("In ASCII:", dec)
+
+    print("\nExecution time details:")
+    for k, v in aes.timings.items():
+        print(k, ":", v, "seconds")
