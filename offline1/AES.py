@@ -1,8 +1,8 @@
 from collections.abc import Callable
 from typing import Any, TypeVar
 from BitVector import BitVector
-
-T = TypeVar("T")
+import numpy as np
+import numpy.typing as npt
 
 
 class AES:
@@ -87,143 +87,157 @@ class AES:
         Returns:
             str: Cipher
         """
+        # if key is longer than 16, truncate
         if len(key) > 16:
             key = key[:16]
 
         # chunk or pad text to list 16 char parts
         plaintexts = self.convert_text_to_16_bytes(plaintext16)
 
-        # get list of round key matrices
-        round_keys_mats4x4 = self.get_round_keys_matrices(key)
+        # get list of 4x4 round key matrices
+        round_key_mats = self.key_expansion(key)
 
+        # for each 16 character plain text, do all rounds of encryption
+        encryption = ""
+        state_mat = np.zeros(shape=(4, 4), dtype=np.uint8)
         for plaintext16 in plaintexts:
-            # state matric for plain text chunk
-            state_mat4x4 = self.convert_list16_to_mat4x4(
-                self.convert_str_to_int_list(plaintext16))
+            # state matrix for plain text chunk
+            state_mat = self.convert_16_char_str_to_4x4_mat(plaintext16)
+            # self.display_nparray_in_hex(state_mat)
 
-            for round in range(10):
-                self.compute_round(
-                    state_mat4x4, round_keys_mats4x4[round], round)
+            for round in range(11):
+                state_mat = self.compute_round_encrypt(
+                    state_mat, round_key_mats[round], round)
+                self.display_nparray_in_hex(state_mat)
 
-        return ""
+            encryption += "".join([hex(elem)[2:].zfill(2)
+                                   for elem in state_mat.flatten(order="F")])
 
-    def compute_round(self, state_mat4x4: list[list[int]], round_key_mat4x4: list[list[int]], round: int) -> list[list[int]]:
-        """Compute each round operation on state matrix.
-
-        Args:
-            state_mat4x4 (list[list[int]]): State matrix of this round
-            round_key_mat4x4 (list[list[int]]): Round key matrix for this round
-            round (int): This round
-
-        Returns:
-            list[list[int]]: Computed state matrix after this round
-        """
-        # add roundkey
-        state_mat = self.apply_elemwise4x4(
-            state_mat4x4, round_key_mat4x4, lambda x, y: x ^ y)
-
-        # byte substitution
-        state_mat = [[AES.SBOX[b] for b in sublist] for sublist in state_mat]
-
-        # shift row
-        for row in range(1, 4):
-            state_mat[row] = self.left_rotate_word(state_mat[row], amount=row)
-
-        # mix column
-        state_mat = [[BitVector(intVal=i) for i in row] for row in state_mat]
-        state_mat = self.apply_elemwise4x4(
-            AES.MIXER, state_mat, lambda x, y: x.gf_multiply_modular(y, AES.MODULUS, 8))
-        state_mat = [[bv.int_val() for bv in row] for row in state_mat]
-
-        return state_mat
-
-    def apply_matmulwise4x4(self, A: list[list[T]], B: list[list[T]],
-                            func: Callable[[T, T], T]) -> list[list[T]]:
-        for i in range(4):
-            for j in range(4):
-                for k in range(4):
-                    pass
-
-    def apply_elemwise4x4(self, A: list[list[T]], B: list[list[T]],
-                          func: Callable[[T, T], T]) -> list[list[T]]:
-        """Compute element-wise operation for two matrices.
-
-        Args:
-            A (list[list[int]]): Matrix A
-            B (list[list[int]]): Matrix B
-
-        Returns:
-            list[list[int]]: result matrix
-        """
-        res: list[list[T]] = []
-        for i in range(4):
-            res.append([])
-            for j in range(4):
-                res[i].append(func(A[i][j], B[i][j]))
-        return res
-
-    def get_round_keys_matrices(self, key: str) -> list[list[list[int]]]:
-        """Generate round keys from provided key using KEY EXPANSION, and return a list of matrices that are the
-        column major matrices suitable for encryption.
-
-        Args:
-            key: str: Key string
-
-        Returns:
-            list[list[list[int]]]: List of 4x4 column major matrices of each key
-        """
-        # List of 4x4 round key mats, for each round
-        round_keys_mats4x4: list[list[list[int]]] = []
-
-        # Convert key words to matrices
-        round_keys = self.key_expansion(key)
-        for i in range(0, 44, 4):
-            # get 4 words at a time to get 16 byte list
-            round_keys_mats4x4.append(self.convert_list16_to_mat4x4(
-                self.flatten_list_of_list(round_keys[i:i+4])))
-
-        return round_keys_mats4x4
-
-    def flatten_list_of_list(self, list_o_list: list[list]) -> list:
-        """Convert list of list to list. 
-
-        Args:
-            list_o_list (list[list]): List of list
-
-        Returns:
-            list: Flattened list
-        """
-        return [elem for sublist in list_o_list for elem in sublist]
-
-    def convert_list16_to_mat4x4(self, list16: list) -> list[list]:
-        """Convert a list of 16 elements to 4x4 matrix format, in **column major** order. 
-
-        Args:
-            list16 (list): List of 16 elements
-
-        Returns:
-            list[list]: Column major matrix 4x4
-        """
-        mat = [[0] * 4 for row in range(4)]
-        for idx, elem in enumerate(list16):
-            mat[idx % 4][idx // 4] = elem
-
-        return mat
+        return encryption
 
     def decrypt(self, cipher: str, key: str) -> str:
-        """Decrpypt the given cipher with the given key.
+        """Decrpypt the given cipher (in hex string format) with the given key.
 
         Args:
-            cipher (str): Cipher text
+            cipher (str): Cipher text in hex string format
             key (str): Key
 
         Returns:
             str: Plain text
         """
-        return ""
+        # if key is longer than 16, truncate
+        if len(key) > 16:
+            key = key[:16]
+
+        # chunk or pad text to list 16 char parts
+        cipher_ascii_str = BitVector(hexstring=cipher).get_bitvector_in_ascii()
+        ciphertexts = self.convert_text_to_16_bytes(cipher_ascii_str)
+
+        # get list of 4x4 round key matrices
+        round_key_mats = self.key_expansion(key)
+        round_key_mats.reverse()
+
+        # for each 16 character plain text, do all rounds of encryption
+        decryption = ""
+        state_mat = np.zeros(shape=(4, 4), dtype=np.uint8)
+        for cipher16 in ciphertexts:
+            # state matrix for plain text chunk
+            state_mat = self.convert_16_char_str_to_4x4_mat(cipher16)
+
+            for round in range(11):
+                state_mat = self.compute_round_decrypt(
+                    state_mat, round_key_mats[round], round)
+
+            decryption += "".join([chr(elem)
+                                  for elem in state_mat.flatten(order="F")])
+
+        return decryption.replace("\0", "")
+
+    def compute_round_decrypt(self, state_mat: npt.NDArray[np.uint8], round_key_mat: npt.NDArray[np.uint8], round: int) -> npt.NDArray[np.uint8]:
+        if round == 0:
+            return state_mat ^ round_key_mat
+        else:
+            state_mat_res = state_mat.copy()
+
+            # shift row
+            for row in range(1, 4):
+                state_mat_res[row, :] = np.roll(
+                    state_mat_res[row, :], shift=row)
+
+            # sub bytes
+            state_mat_res = self.byte_substitution(state_mat_res, AES.INV_SBOX)
+
+            # add round key
+            state_mat_res ^= round_key_mat
+
+            # inverse mix column
+            if round != 10:
+                state_mat_res = self.mix_column(state_mat_res, AES.INV_MIXER)
+
+            return state_mat_res
+
+    def compute_round_encrypt(self, state_mat: npt.NDArray[np.uint8], round_key_mat: npt.NDArray[np.uint8], round: int) -> npt.NDArray[np.uint8]:
+        """Compute each round of encryption on the state matrix and return the resulting state matrix.
+
+        Args:
+            state_mat (npt.NDArray[np.uint8]): 4x4 state matrix
+            round_key_mat (npt.NDArray[np.uint8]): 4x4 round key matrix
+            round (int): round number
+
+        Returns:
+            npt.NDArray[np.uint8]: resulting state matrix
+        """
+        if round == 0:
+            # add roundkey
+            return state_mat ^ round_key_mat
+        else:
+            state_mat_res = state_mat.copy()
+
+            # byte substitution
+            state_mat_res = self.byte_substitution(state_mat_res)
+
+            # shift row
+            for row in range(1, 4):
+                state_mat_res[row, :] = np.roll(
+                    state_mat_res[row, :], shift=-row)
+
+            # mix column
+            if round != 10:  # todo: variable rounds
+                state_mat_res = self.mix_column(state_mat_res)
+
+            # add round key
+            state_mat_res ^= round_key_mat
+
+            return state_mat_res
+
+    def mix_column(self, state_mat: npt.NDArray[np.uint8], MX=MIXER) -> npt.NDArray[np.uint8]:
+        """Perform the mix column step of encryption on the state matrix.
+
+        Args:
+            state_mat (npt.NDArray[np.uint8]): State matrix
+
+        Returns:
+            npt.NDArray[np.uint8]: Result
+        """
+        state_mat_bitvec = state_mat.tolist()
+        state_mat_bitvec = [
+            [BitVector(intVal=elem) for elem in sublist] for sublist in state_mat_bitvec]
+
+        result_mat = np.zeros(shape=(4, 4), dtype=np.uint8)
+        # do matmul
+        for i in range(4):
+            for j in range(4):
+                r = 0
+                for k in range(4):
+                    r ^= MX[i][k].gf_multiply_modular(
+                        state_mat_bitvec[k][j], AES.MODULUS, 8).int_val()
+                result_mat[i, j] = r
+
+        return result_mat.astype(np.uint8)
 
     def convert_text_to_16_bytes(self, plaintext: str) -> list[str]:
-        """Convert text of any length to list of 16 bytes textx (128 bits).
+        """Convert text of any length to list of 16 bytes texts (128 bits). If smaller, pad it to 16 chars, 
+        if larger, chunk it to a list of 16 character chunks.
 
         Args:
             text (str): text of any length
@@ -243,113 +257,101 @@ class AES:
                          for i in range(0, len(plaintext) - 16, 16)])
             texts.append(
                 pad_smaller_text(
-                    plaintext[(len(plaintext) // 16) * 16:]))
+                    plaintext[((len(plaintext)-1) // 16) * 16:]))
+        else:
+            texts.append(plaintext)
 
         return texts
 
-    def convert_16_byte_key_to_4_byte_words(self, key: str) -> list[str]:
-        """Convert 16 bytes key (HAS TO BE 16 BYTE KEY) to a list of 4 byte words.
+    def convert_16_char_str_to_4x4_mat(self, key: str) -> npt.NDArray[np.uint8]:
+        """Convert 16 character key (HAS TO BE 16 character KEY) to a 4x4 column major matrix of
+        4 4-character words, whose UNICODE numbers are stored in the matrix.
 
         Args:
             key (str): 16 byte keys
 
         Returns:
-            list[str]: list of 4 key words, each word having 4 bytes
+            npt.NDArray[np.uint8]: 2D column wise matrix, each column having the UNICODE number of a 4 
+            character word
         """
-        return [key[i:i+4] for i in range(0, len(key), 4)]
 
-    def convert_str_to_int_list(self, key: str) -> list[int]:
-        """Convert string to list of unicode ints.
+        words = [self.convert_str_to_unicode_int_array(
+            key[i:i+4]) for i in range(0, len(key), 4)]
+        return np.array(words).T
+
+    def convert_str_to_unicode_int_array(self, key: str) -> npt.NDArray[np.uint8]:
+        """Convert string to an array of unicode ints.
 
         Args:
             key (str): Key string
 
         Returns:
-            list[int]: list of UNICODE ints of the chars
+            npt.NDArray[np.uint8]: array of UNICODE ints of the chars
         """
-        return [ord(c) for c in key]
+        return np.array([ord(c) for c in key])
 
-    def left_rotate_word(self, word: list[int], amount=1) -> list[int]:
-        """Left rotate word by 1. `word` must have length greater than 1.
+    def byte_substitution(self, mat: npt.NDArray[np.uint8], box=SBOX) -> npt.NDArray[np.uint8]:
+        return np.vectorize(lambda elem: box[elem])(mat)
 
-        Args:
-            word (list[int]): word to be rotated
-
-        Returns:
-            str: Left rotated word
-        """
-        return word[amount:] + word[0:amount]
-
-    def get_next_round_key(self, key: list[list[int]], round: int) -> list[list[int]]:
+    def get_next_round_key(self, key_word_mat: npt.NDArray[np.uint8], round: int) -> npt.NDArray[np.uint8]:
         """Get next round's key from provided key.
 
         Args:
-            key: list[list[int]]: 4x4 matrix of words in the key
+            key_word_mat: npt.NDArray[np.uint8]: 4x4 matrix of words in the key, in column major order
             round: int: The round number
 
         Returns:
-            list[list[int]]: The 4x4 matrix for the next round's key
+            npt.NDArray[np.uint8]: The 4x4 matrix for the next round's key
         """
-
-        def xor_words(word1: list[int], word2: list[int]) -> list[int]:
-            """Elementwise XOR between two key words. 
-
-            Args:
-                word1 (list[int]): Word 1
-                word2 (list[int]): Word 2
-
-            Returns:
-                list[int]: Resulting word after XOR 
-            """
-            return list(map(lambda x, y: x ^ y, word1, word2))
-
-        w0, w1, w2, w3 = key
-        gw3 = self.left_rotate_word(w3)
+        gw3 = np.roll(key_word_mat[:, 3], shift=-1)  # -1 for left shift by 1
 
         # byte substitution
-        gw3 = [AES.SBOX[b] for b in gw3]
+        gw3: npt.NDArray[np.uint8] = self.byte_substitution(gw3)
 
         # Adding round constant (XORing 1 to left most char of gw3)
         gw3[0] ^= AES.RC[round]
 
         # next key
-        w4 = xor_words(w0, gw3)
-        w5 = xor_words(w4, w1)
-        w6 = xor_words(w5, w2)
-        w7 = xor_words(w6, w3)
+        w4 = key_word_mat[:, 0] ^ gw3
+        w5 = w4 ^ key_word_mat[:, 1]
+        w6 = w5 ^ key_word_mat[:, 2]
+        w7 = w6 ^ key_word_mat[:, 3]
 
-        return [w4, w5, w6, w7]
+        return np.array([w4, w5, w6, w7], dtype=np.uint8).T
 
-    def key_expansion(self, key: str) -> list[list[int]]:
-        """Expand 16 byte key to 44 keys each of 4 words.
+    def key_expansion(self, key: str) -> list[npt.NDArray[np.uint8]]:
+        """Expand 16 byte key to 11 4x4 key matrix, each column of a matrix represents a word.
 
         Args:
             key (str): Key string of 16 characters
 
         Returns:
-            list[list[int]]: List of 44 4-byte words
+            list[npt.NDArray[np.uint8]]: List of 11 4x4 round key matrices
         """
 
-        words = self.convert_16_byte_key_to_4_byte_words(key)
-        words = [self.convert_str_to_int_list(word) for word in words]
+        key_mat = self.convert_16_char_str_to_4x4_mat(key)
 
-        # list of words (list[int])
-        key_words: list[list[int]] = [*words]
+        # list of key matrices for each round
+        round_key_mats: list[npt.NDArray[np.uint8]] = [key_mat]
 
         # todo: variable round of keys for variable keys
         for round in range(10):
-            next_words = self.get_next_round_key(words, round)
-            key_words.extend(next_words)
-            words = next_words
+            next_key_mat = self.get_next_round_key(key_mat, round)
+            round_key_mats.append(next_key_mat)
+            key_mat = next_key_mat
 
-        return key_words
+        return round_key_mats
 
-    def convert_word_to_hex(self, word: list[int]) -> list[str]:
-        return [hex(w) for w in word]
+    def display_nparray_in_hex(self, array: np.ndarray):
+        hex_func = np.vectorize(hex)
+        print(hex_func(array))
 
 
 if __name__ == "__main__":
     aes = AES()
-    words = aes.key_expansion("Thats my Kung Fu")
-    for i in range(44):
-        print(aes.convert_word_to_hex(words[i]))
+    KEY = "Thats my Kung Fu more stuff"
+    TEXT = "Two One Nine Two Radio Alpha joseph bravo plane gonjo broken something run out of things to say"
+    enc = aes.encrypt(plaintext16=TEXT, key=KEY)
+    print(enc)
+    dec = aes.decrypt(enc, KEY)
+    print(dec)
