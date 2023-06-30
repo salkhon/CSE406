@@ -75,7 +75,7 @@ class AES:
     def __init__(self):
         pass
 
-    def encrypt(self, plaintext16: str, key: str) -> str:
+    def encrypt(self, plaintext: str, key: str, verbose=False) -> str:
         """Encrypt the given text, with the provided key.
 
         If key has length less than 128 bits, zero pad it. 
@@ -92,7 +92,7 @@ class AES:
             key = key[:16]
 
         # chunk or pad text to list 16 char parts
-        plaintexts = self.convert_text_to_16_bytes(plaintext16)
+        plaintexts = self.convert_text_to_16_bytes(plaintext)
 
         # get list of 4x4 round key matrices
         round_key_mats = self.key_expansion(key)
@@ -346,12 +346,16 @@ class AES:
         hex_func = np.vectorize(hex)
         print(hex_func(array))
 
+    def convert_ascii_to_hex_string(self, ascii: str) -> str:
+        return "".join([hex(ord(char))[2:].zfill(2)
+                        for char in ascii])
+
 
 if __name__ == "__main__":
     aes = AES()
     KEY = "Thats my Kung Fu more stuff"
     TEXT = "Two One Nine Two Radio Alpha joseph bravo plane gonjo broken something run out of things to say"
-    enc = aes.encrypt(plaintext16=TEXT, key=KEY)
+    enc = aes.encrypt(plaintext=TEXT, key=KEY)
     print(enc)
     dec = aes.decrypt(enc, KEY)
     print(dec)
